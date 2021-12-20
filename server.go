@@ -2,6 +2,7 @@ package geerpc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"gee-rpc/codec"
 	"io"
@@ -24,8 +25,10 @@ var DefaultOption = &Option{
 	CodecType:   codec.GobType,
 }
 
-// Server RPC server
-type Server struct{}
+// Server represents an RPC Server
+type Server struct {
+	serviceMap sync.Map
+}
 
 func NewServer() *Server {
 	return &Server{}
@@ -137,3 +140,15 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 	req.reply = reflect.ValueOf(fmt.Sprintf("geerpc rsp %d", req.h.Seq))
 	server.sendResponse(cc, req.h, req.reply.Interface(), sending)
 }
+
+// Register publishes in the server the set of methods
+func (server *Server) Register(rcvr interface{}) error {
+	s := newService(rcvr)
+	if _, dup := server.serviceMap.LoadOrStore(s.name, s); dup {
+		return errors.New("rpc: service already defined: " + s.name)
+	}
+	return nil
+}
+
+// Register publishes the receiver's methods in the DefaultServer.
+func Register(rcvr interface{}) error { return DefaultServer.Register(rcvr) }

@@ -65,7 +65,7 @@ func (client *Client) IsAvailable() bool {
 // 添加 call，并记录 seq
 func (client *Client) registerCall(call *Call) (uint64, error) {
 	client.mu.Lock()
-	defer client.mu.Lock()
+	defer client.mu.Unlock()
 	if client.closing || client.shutdown {
 		return 0, ErrShutdown
 	}
@@ -115,7 +115,7 @@ func (client *Client) receive() {
 			err = client.cc.ReadBody(nil)
 			call.done()
 		default:
-			err = client.cc.ReadBody(nil)
+			err = client.cc.ReadBody(call.Reply)
 			if err != nil {
 				call.Error = errors.New("reading body " + err.Error())
 			}
@@ -136,17 +136,18 @@ func NewClient(conn net.Conn, opt *Option) (*Client, error) {
 		log.Println("rpc client: codec error:", err)
 		return nil, err
 	}
+	// send options with server
 	if err := json.NewEncoder(conn).Encode(opt); err != nil {
 		log.Println("rpc client: options error: ", err)
 		_ = conn.Close()
 		return nil, err
 	}
-	return newClient(f(conn), opt), nil
+	return newClientCodec(f(conn), opt), nil
 }
 
-func newClient(cc codec.Codec, opt *Option) *Client {
+func newClientCodec(cc codec.Codec, opt *Option) *Client {
 	client := &Client{
-		seq:     1, // starts with 1
+		seq:     1, // seq starts with 1, 0 means invalid call
 		cc:      cc,
 		opt:     opt,
 		pending: make(map[uint64]*Call),
@@ -170,4 +171,74 @@ func parseOptions(opts ...*Option) (*Option, error) {
 	return opt, nil
 }
 
-// TODO: Client Dial
+// Dial connects to an RPC server at the specified network address
+func Dial(network, address string, opts ...*Option) (client *Client, err error) {
+	opt, err := parseOptions(opts...)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	// close the connection if client is nil
+	defer func() {
+		if client == nil {
+			_ = conn.Close()
+		}
+	}()
+	return NewClient(conn, opt)
+}
+
+func (client *Client) send(call *Call) {
+	// make sure that the client will send a complete request
+	client.sending.Lock()
+	defer client.sending.Unlock()
+
+	// register this call.
+	seq, err := client.registerCall(call)
+	if err != nil {
+		call.Error = err
+		call.done()
+		return
+	}
+
+	// prepare request header
+	client.header.ServiceMethod = call.ServiceMethod
+	client.header.Seq = seq
+	client.header.Error = ""
+
+	// encode and send the request
+	if err := client.cc.Write(&client.header, call.Args); err != nil {
+		call := client.removeCall(seq)
+		// call may be nil, it usually means that Write partially failed,
+		// client has received the response and handled
+		if call != nil {
+			call.Error = err
+			call.done()
+		}
+	}
+}
+
+// Go 异步调用，返回 call 结构体
+func (client *Client) Go(serviceMethod string, args, reply interface{}, done chan *Call) *Call {
+	if done == nil {
+		done = make(chan *Call, 10)
+	} else if cap(done) == 0 {
+		log.Panic("rpc client: done channel is unbuffered")
+	}
+	call := &Call{
+		ServiceMethod: serviceMethod,
+		Args:          args,
+		Reply:         reply,
+		Done:          done,
+	}
+	client.send(call)
+	return call
+}
+
+// Call 同步调用
+func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
+	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
+	return call.Error
+}
