@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"gee-rpc"
 	"log"
 	"net"
@@ -66,11 +67,13 @@ func main() {
 			defer wg.Done()
 			// args := fmt.Sprintf("geerpc req %d", i)
 			args := &Args{Num1: i, Num2: i * i}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			var reply int
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
 			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
+			cancel()
 		}(i)
 	}
 	wg.Wait()

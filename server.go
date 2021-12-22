@@ -10,19 +10,23 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x3bef5c
 
 // Option 固定字节长度传输，用来协商协议
 type Option struct {
-	MagicNumber int
-	CodecType   codec.Type // client may choose different Codec to encode body
+	MagicNumber    int
+	CodecType      codec.Type // client may choose different Codec to encode body
+	ConnectTimeout time.Duration
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNumber: MagicNumber,
-	CodecType:   codec.GobType,
+	MagicNumber:    MagicNumber,
+	CodecType:      codec.GobType,
+	ConnectTimeout: time.Second * 10,
 }
 
 // Server represents an RPC Server
