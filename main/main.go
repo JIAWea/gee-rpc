@@ -5,6 +5,7 @@ import (
 	"gee-rpc"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -35,14 +36,25 @@ func startServer(addr chan<- string) {
 	geerpc.Accept(l)
 }
 
+func startHTTPServer(addrCh chan string) {
+	var foo Foo
+	l, _ := net.Listen("tcp", ":9999")
+	_ = geerpc.Register(&foo)
+	geerpc.HandleHTTP()
+	addrCh <- l.Addr().String()
+	_ = http.Serve(l, nil)
+}
+
 func main() {
 	log.SetFlags(0)
 	addr := make(chan string)
-	go startServer(addr)
+	// go startServer(addr)
+	go startHTTPServer(addr)
 
 	// in fact, following code is like a simple client
 	// conn, _ := net.Dial("tcp", <-addr)
-	client, _ := geerpc.Dial("tcp", <-addr)
+	// client, _ := geerpc.Dial("tcp", <-addr)
+	client, _ := geerpc.DialHTTP("tcp", <-addr)
 	defer func() { _ = client.Close() }()
 
 	time.Sleep(time.Second)
@@ -67,14 +79,17 @@ func main() {
 			defer wg.Done()
 			// args := fmt.Sprintf("geerpc req %d", i)
 			args := &Args{Num1: i, Num2: i * i}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx := context.Background()
 			var reply int
 			if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
 			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
-			cancel()
+			// cancel()
 		}(i)
 	}
 	wg.Wait()
+
+	time.Sleep(time.Second * 10)
 }
